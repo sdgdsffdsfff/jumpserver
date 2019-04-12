@@ -4,6 +4,7 @@ import subprocess
 
 from django.conf import settings
 from celery import shared_task, subtask
+from celery.exceptions import SoftTimeLimitExceeded
 from django.utils import timezone
 
 from common.utils import get_logger, get_object_or_none
@@ -38,11 +39,14 @@ def run_ansible_task(tid, callback=None, **kwargs):
         logger.error("No task found")
 
 
-@shared_task
+@shared_task(soft_time_limit=60)
 def run_command_execution(cid, **kwargs):
     execution = get_object_or_none(CommandExecution, id=cid)
     if execution:
-        execution.run()
+        try:
+            execution.run()
+        except SoftTimeLimitExceeded:
+            print("HLLL")
     else:
         logger.error("Not found the execution id: {}".format(cid))
 
@@ -80,6 +84,8 @@ def clean_celery_tasks_period():
     command = "find %s -mtime +%s -name '*.log' -type f -exec rm -f {} \\;" % (
         settings.CELERY_LOG_DIR, expire_days
     )
+    subprocess.call(command, shell=True)
+    command = "echo > {}".format(os.path.join(settings.LOG_DIR, 'celery.log'))
     subprocess.call(command, shell=True)
 
 
