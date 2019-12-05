@@ -54,6 +54,9 @@ LOG_LEVEL = CONFIG.LOG_LEVEL
 
 ALLOWED_HOSTS = ['*']
 
+# Max post update field num
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -68,9 +71,11 @@ INSTALLED_APPS = [
     'audits.apps.AuditsConfig',
     'authentication.apps.AuthenticationConfig',  # authentication
     'applications.apps.ApplicationsConfig',
+    'tickets.apps.TicketsConfig',
     'rest_framework',
     'rest_framework_swagger',
     'drf_yasg',
+    'channels',
     'django_filters',
     'bootstrap3',
     'captcha',
@@ -111,6 +116,7 @@ MIDDLEWARE = [
     'orgs.middleware.OrgMiddleware',
 ]
 
+
 ROOT_URLCONF = 'jumpserver.urls'
 
 TEMPLATES = [
@@ -136,7 +142,8 @@ TEMPLATES = [
     },
 ]
 
-# WSGI_APPLICATION = 'jumpserver.wsgi.applications'
+WSGI_APPLICATION = 'jumpserver.wsgi.application'
+ASGI_APPLICATION = 'jumpserver.routing.application'
 
 LOGIN_REDIRECT_URL = reverse_lazy('index')
 LOGIN_URL = reverse_lazy('authentication:login')
@@ -213,6 +220,9 @@ LOGGING = {
         'simple': {
             'format': '%(levelname)s %(message)s'
         },
+        'syslog': {
+            'format': 'jumpserver: %(message)s'
+        },
         'msg': {
             'format': '%(message)s'
         }
@@ -245,19 +255,10 @@ LOGGING = {
             'backupCount': 7,
             'filename': ANSIBLE_LOG_FILE,
         },
-        'gunicorn_file': {
-            'encoding': 'utf8',
-            'level': 'DEBUG',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'formatter': 'msg',
-            'maxBytes': 1024*1024*100,
-            'backupCount': 2,
-            'filename': GUNICORN_LOG_FILE,
-        },
-        'gunicorn_console': {
-            'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
-            'formatter': 'msg'
+        'syslog': {
+            'level': 'INFO',
+            'class': 'logging.NullHandler',
+            'formatter': 'syslog'
         },
     },
     'loggers': {
@@ -267,25 +268,17 @@ LOGGING = {
             'level': LOG_LEVEL,
         },
         'django.request': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console', 'file', 'syslog'],
             'level': LOG_LEVEL,
             'propagate': False,
         },
         'django.server': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console', 'file', 'syslog'],
             'level': LOG_LEVEL,
             'propagate': False,
         },
         'jumpserver': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
-        },
-        'jumpserver.users.api': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
-        },
-        'jumpserver.users.view': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console', 'file', 'syslog'],
             'level': LOG_LEVEL,
         },
         'ops.ansible_api': {
@@ -296,9 +289,9 @@ LOGGING = {
             'handlers': ['console', 'file'],
             'level': "INFO",
         },
-        'gunicorn': {
-            'handlers': ['gunicorn_console', 'gunicorn_file'],
-            'level': 'INFO',
+        'jms.audits': {
+            'handlers': ['syslog'],
+            'level': 'INFO'
         },
         # 'django.db': {
         #     'handlers': ['console', 'file'],
@@ -306,6 +299,17 @@ LOGGING = {
         # }
     }
 }
+
+SYSLOG_ENABLE = False
+
+if CONFIG.SYSLOG_ADDR != '' and len(CONFIG.SYSLOG_ADDR.split(':')) == 2:
+    host, port = CONFIG.SYSLOG_ADDR.split(':')
+    SYSLOG_ENABLE = True
+    LOGGING['handlers']['syslog'].update({
+        'class': 'logging.handlers.SysLogHandler',
+        'facility': CONFIG.SYSLOG_FACILITY,
+        'address': (host, int(port)),
+    })
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.10/topics/i18n/
@@ -328,7 +332,7 @@ LOCALE_PATHS = [
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.10/howto/static-files/
 
-STATIC_URL = '/static/'
+STATIC_URL = '{}/static/'.format(CONFIG.FORCE_SCRIPT_NAME)
 STATIC_ROOT = os.path.join(PROJECT_DIR, "data", "static")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
@@ -353,11 +357,13 @@ EMAIL_HOST = 'smtp.jumpserver.org'
 EMAIL_PORT = 25
 EMAIL_HOST_USER = 'noreply@jumpserver.org'
 EMAIL_HOST_PASSWORD = ''
+EMAIL_FROM = ''
+EMAIL_RECIPIENT = ''
 EMAIL_USE_SSL = False
 EMAIL_USE_TLS = False
 EMAIL_SUBJECT_PREFIX = '[JMS] '
 
-#Email custom content
+# Email custom content
 EMAIL_CUSTOM_USER_CREATED_SUBJECT = ''
 EMAIL_CUSTOM_USER_CREATED_HONORIFIC = ''
 EMAIL_CUSTOM_USER_CREATED_BODY = ''
@@ -386,6 +392,7 @@ REST_FRAMEWORK = {
         'authentication.backends.api.AccessKeyAuthentication',
         'authentication.backends.api.AccessTokenAuthentication',
         'authentication.backends.api.PrivateTokenAuthentication',
+        'authentication.backends.api.SignatureAuthentication',
         'authentication.backends.api.SessionAuthentication',
     ),
     'DEFAULT_FILTER_BACKENDS': (
@@ -397,13 +404,14 @@ REST_FRAMEWORK = {
     'ORDERING_PARAM': "order",
     'SEARCH_PARAM': "search",
     'DATETIME_FORMAT': '%Y-%m-%d %H:%M:%S %z',
-    'DATETIME_INPUT_FORMATS': ['%Y-%m-%d %H:%M:%S %z'],
-    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'DATETIME_INPUT_FORMATS': ['iso-8601', '%Y-%m-%d %H:%M:%S %z'],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     # 'PAGE_SIZE': 15
 }
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
+    'authentication.backends.pubkey.PublicKeyAuthBackend',
 ]
 
 # Custom User Auth model
@@ -419,6 +427,12 @@ OTP_VALID_WINDOW = CONFIG.OTP_VALID_WINDOW
 
 # Auth LDAP settings
 AUTH_LDAP = False
+AUTH_LDAP_SEARCH_PAGED_SIZE = CONFIG.AUTH_LDAP_SEARCH_PAGED_SIZE
+AUTH_LDAP_SYNC_IS_PERIODIC = CONFIG.AUTH_LDAP_SYNC_IS_PERIODIC
+AUTH_LDAP_SYNC_INTERVAL = CONFIG.AUTH_LDAP_SYNC_INTERVAL
+AUTH_LDAP_SYNC_CRONTAB = CONFIG.AUTH_LDAP_SYNC_CRONTAB
+AUTH_LDAP_USER_LOGIN_ONLY_IN_USERS = CONFIG.AUTH_LDAP_USER_LOGIN_ONLY_IN_USERS
+
 AUTH_LDAP_SERVER_URI = 'ldap://localhost:389'
 AUTH_LDAP_BIND_DN = 'cn=admin,dc=jumpserver,dc=org'
 AUTH_LDAP_BIND_PASSWORD = ''
@@ -428,6 +442,7 @@ AUTH_LDAP_START_TLS = False
 AUTH_LDAP_USER_ATTR_MAP = {"username": "cn", "name": "sn", "email": "mail"}
 AUTH_LDAP_GLOBAL_OPTIONS = {
     ldap.OPT_X_TLS_REQUIRE_CERT: ldap.OPT_X_TLS_NEVER,
+    ldap.OPT_REFERRALS: CONFIG.AUTH_LDAP_OPTIONS_OPT_REFERRALS
 }
 LDAP_CERT_FILE = os.path.join(PROJECT_DIR, "data", "certs", "ldap_ca.pem")
 if os.path.isfile(LDAP_CERT_FILE):
@@ -455,6 +470,8 @@ AUTH_OPENID_SERVER_URL = CONFIG.AUTH_OPENID_SERVER_URL
 AUTH_OPENID_REALM_NAME = CONFIG.AUTH_OPENID_REALM_NAME
 AUTH_OPENID_CLIENT_ID = CONFIG.AUTH_OPENID_CLIENT_ID
 AUTH_OPENID_CLIENT_SECRET = CONFIG.AUTH_OPENID_CLIENT_SECRET
+AUTH_OPENID_IGNORE_SSL_VERIFICATION = CONFIG.AUTH_OPENID_IGNORE_SSL_VERIFICATION
+AUTH_OPENID_SHARE_SESSION = CONFIG.AUTH_OPENID_SHARE_SESSION
 AUTH_OPENID_BACKENDS = [
     'authentication.backends.openid.backends.OpenIDAuthorizationPasswordBackend',
     'authentication.backends.openid.backends.OpenIDAuthorizationCodeBackend',
@@ -501,7 +518,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_WORKER_REDIRECT_STDOUTS = True
 CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # CELERY_WORKER_HIJACK_ROOT_LOGGER = True
-CELERY_WORKER_MAX_TASKS_PER_CHILD = 40
+# CELERY_WORKER_MAX_TASKS_PER_CHILD = 40
 CELERY_TASK_SOFT_TIME_LIMIT = 3600
 
 # Cache use redis
@@ -546,6 +563,7 @@ TERMINAL_REPLAY_STORAGE = {
 
 
 SECURITY_MFA_AUTH = False
+SECURITY_COMMAND_EXECUTION = True
 SECURITY_LOGIN_LIMIT_COUNT = 7
 SECURITY_LOGIN_LIMIT_TIME = 30  # Unit: minute
 SECURITY_MAX_IDLE_TIME = 30  # Unit: minute
@@ -562,7 +580,8 @@ SECURITY_PASSWORD_RULES = [
     'SECURITY_PASSWORD_NUMBER',
     'SECURITY_PASSWORD_SPECIAL_CHAR'
 ]
-
+SECURITY_MFA_VERIFY_TTL = CONFIG.SECURITY_MFA_VERIFY_TTL
+SECURITY_SERVICE_ACCOUNT_REGISTRATION = CONFIG.SECURITY_SERVICE_ACCOUNT_REGISTRATION
 TERMINAL_PASSWORD_AUTH = CONFIG.TERMINAL_PASSWORD_AUTH
 TERMINAL_PUBLIC_KEY_AUTH = CONFIG.TERMINAL_PUBLIC_KEY_AUTH
 TERMINAL_HEARTBEAT_INTERVAL = CONFIG.TERMINAL_HEARTBEAT_INTERVAL
@@ -592,19 +611,50 @@ USER_GUIDE_URL = ""
 
 SWAGGER_SETTINGS = {
     'DEFAULT_AUTO_SCHEMA_CLASS': 'jumpserver.swagger.CustomSwaggerAutoSchema',
+    'USE_SESSION_AUTH': True,
     'SECURITY_DEFINITIONS': {
-        'basic': {
-            'type': 'basic'
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header'
         }
     },
 }
+
 
 # Default email suffix
 EMAIL_SUFFIX = CONFIG.EMAIL_SUFFIX
 LOGIN_LOG_KEEP_DAYS = CONFIG.LOGIN_LOG_KEEP_DAYS
 
 # User or user group permission cache time, default 3600 seconds
+ASSETS_PERM_CACHE_ENABLE = CONFIG.ASSETS_PERM_CACHE_ENABLE
 ASSETS_PERM_CACHE_TIME = CONFIG.ASSETS_PERM_CACHE_TIME
 
 # Asset user auth external backend, default AuthBook backend
 BACKEND_ASSET_USER_AUTH_VAULT = False
+
+DEFAULT_ORG_SHOW_ALL_USERS = CONFIG.DEFAULT_ORG_SHOW_ALL_USERS
+
+PERM_SINGLE_ASSET_TO_UNGROUP_NODE = CONFIG.PERM_SINGLE_ASSET_TO_UNGROUP_NODE
+WINDOWS_SSH_DEFAULT_SHELL = CONFIG.WINDOWS_SSH_DEFAULT_SHELL
+FLOWER_URL = CONFIG.FLOWER_URL
+
+
+# Django channels support websocket
+CHANNEL_REDIS = "redis://:{}@{}:{}/{}".format(
+    CONFIG.REDIS_PASSWORD, CONFIG.REDIS_HOST, CONFIG.REDIS_PORT,
+    CONFIG.REDIS_DB_WS,
+)
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [CHANNEL_REDIS],
+        },
+    },
+}
+
+# Enable internal period task
+PERIOD_TASK_ENABLED = CONFIG.PERIOD_TASK_ENABLED
+FORCE_SCRIPT_NAME = CONFIG.FORCE_SCRIPT_NAME

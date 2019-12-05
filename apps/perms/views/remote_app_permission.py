@@ -9,11 +9,10 @@ from django.views.generic import (
 from django.views.generic.edit import SingleObjectMixin
 from django.conf import settings
 
-from common.permissions import AdminUserRequiredMixin
+from common.permissions import PermissionsMixin, IsOrgAdmin
 from orgs.utils import current_org
-from users.models import UserGroup
-from assets.models import RemoteApp
 
+from ..hands import RemoteApp, UserGroup, SystemUser
 from ..models import RemoteAppPermission
 from ..forms import RemoteAppPermissionCreateUpdateForm
 
@@ -25,8 +24,9 @@ __all__ = [
 ]
 
 
-class RemoteAppPermissionListView(AdminUserRequiredMixin, TemplateView):
+class RemoteAppPermissionListView(PermissionsMixin, TemplateView):
     template_name = 'perms/remote_app_permission_list.html'
+    permission_classes = [IsOrgAdmin]
 
     def get_context_data(self, **kwargs):
         context = {
@@ -37,56 +37,65 @@ class RemoteAppPermissionListView(AdminUserRequiredMixin, TemplateView):
         return super().get_context_data(**kwargs)
 
 
-class RemoteAppPermissionCreateView(AdminUserRequiredMixin, CreateView):
+class RemoteAppPermissionCreateView(PermissionsMixin, CreateView):
     template_name = 'perms/remote_app_permission_create_update.html'
     model = RemoteAppPermission
     form_class = RemoteAppPermissionCreateUpdateForm
     success_url = reverse_lazy('perms:remote-app-permission-list')
+    permission_classes = [IsOrgAdmin]
 
     def get_context_data(self, **kwargs):
         context = {
             'app': _('Perms'),
             'action': _('Create RemoteApp permission'),
+            'type': 'create'
         }
         kwargs.update(context)
         return super().get_context_data(**kwargs)
 
 
-class RemoteAppPermissionUpdateView(AdminUserRequiredMixin, UpdateView):
+class RemoteAppPermissionUpdateView(PermissionsMixin, UpdateView):
     template_name = 'perms/remote_app_permission_create_update.html'
     model = RemoteAppPermission
     form_class = RemoteAppPermissionCreateUpdateForm
     success_url = reverse_lazy('perms:remote-app-permission-list')
+    permission_classes = [IsOrgAdmin]
 
     def get_context_data(self, **kwargs):
         context = {
             'app': _('Perms'),
-            'action': _('Update RemoteApp permission')
+            'action': _('Update RemoteApp permission'),
+            'type': 'update'
         }
         kwargs.update(context)
         return super().get_context_data(**kwargs)
 
 
-class RemoteAppPermissionDetailView(AdminUserRequiredMixin, DetailView):
+class RemoteAppPermissionDetailView(PermissionsMixin, DetailView):
     template_name = 'perms/remote_app_permission_detail.html'
     model = RemoteAppPermission
+    permission_classes = [IsOrgAdmin]
 
     def get_context_data(self, **kwargs):
         context = {
             'app': _('Perms'),
             'action': _('RemoteApp permission detail'),
+            'system_users_remain': SystemUser.objects.exclude(
+                granted_by_remote_app_permissions=self.object
+            ),
         }
         kwargs.update(context)
         return super().get_context_data(**kwargs)
 
 
-class RemoteAppPermissionUserView(AdminUserRequiredMixin,
+class RemoteAppPermissionUserView(PermissionsMixin,
                                   SingleObjectMixin,
                                   ListView):
     template_name = 'perms/remote_app_permission_user.html'
     context_object_name = 'remote_app_permission'
     paginate_by = settings.DISPLAY_PER_PAGE
     object = None
+    permission_classes = [IsOrgAdmin]
 
     def get(self, request, *args, **kwargs):
         self.object = self.get_object(
@@ -98,27 +107,28 @@ class RemoteAppPermissionUserView(AdminUserRequiredMixin,
         return queryset
 
     def get_context_data(self, **kwargs):
+        user_remain = current_org.get_org_members(exclude=('Auditor',)).exclude(
+            remoteapppermission=self.object)
+        user_groups_remain = UserGroup.objects.exclude(
+            remoteapppermission=self.object)
         context = {
             'app': _('Perms'),
             'action': _('RemoteApp permission user list'),
-            'users_remain': current_org.get_org_users().exclude(
-                remoteapppermission=self.object
-            ),
-            'user_groups_remain': UserGroup.objects.exclude(
-                remoteapppermission=self.object
-            )
+            'users_remain': user_remain,
+            'user_groups_remain': user_groups_remain,
         }
         kwargs.update(context)
         return super().get_context_data(**kwargs)
 
 
-class RemoteAppPermissionRemoteAppView(AdminUserRequiredMixin,
+class RemoteAppPermissionRemoteAppView(PermissionsMixin,
                                        SingleObjectMixin,
                                        ListView):
     template_name = 'perms/remote_app_permission_remote_app.html'
     context_object_name = 'remote_app_permission'
     paginate_by = settings.DISPLAY_PER_PAGE
     object = None
+    permission_classes = [IsOrgAdmin]
 
     def get(self, request, *args, **kwargs):
         self.object = self.get_object(

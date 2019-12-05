@@ -40,8 +40,8 @@ class BaseForm(forms.Form):
                 field = self.fields[name]
                 if isinstance(field.widget, forms.PasswordInput) and not value:
                     continue
-                if value == getattr(settings, name):
-                    continue
+                # if value == getattr(settings, name):
+                #     continue
 
                 encrypted = True if isinstance(field, FormEncryptMixin) else False
                 try:
@@ -80,7 +80,18 @@ class EmailSettingForm(BaseForm):
     )
     EMAIL_HOST_PASSWORD = FormEncryptCharField(
         max_length=1024, label=_("SMTP password"), widget=forms.PasswordInput,
-        required=False, help_text=_("Some provider use token except password")
+        required=False,
+        help_text=_("Tips: Some provider use token except password")
+    )
+    EMAIL_FROM = forms.CharField(
+        max_length=128, label=_("Send user"), initial='', required=False,
+        help_text=_(
+            "Tips: Send mail account, default SMTP account as the send account"
+        )
+    )
+    EMAIL_RECIPIENT = forms.CharField(
+        max_length=128, label=_("Test recipient"), initial='', required=False,
+        help_text=_("Tips: Used only as a test mail recipient")
     )
     EMAIL_USE_SSL = forms.BooleanField(
         label=_("Use SSL"), initial=False, required=False,
@@ -180,6 +191,16 @@ class SecuritySettingForm(BaseForm):
             'authentication (valid for all users, including administrators)'
         )
     )
+    # Execute commands for user
+    SECURITY_COMMAND_EXECUTION = forms.BooleanField(
+        required=False, label=_("Batch execute commands"),
+        help_text=_("Allow user batch execute commands")
+    )
+    SECURITY_SERVICE_ACCOUNT_REGISTRATION = forms.BooleanField(
+        required=False, label=_("Service account registration"),
+        help_text=_("Allow using bootstrap token register service account, "
+                    "when terminal setup, can disable it")
+    )
     # limit login count
     SECURITY_LOGIN_LIMIT_COUNT = forms.IntegerField(
         min_value=3, max_value=99999,
@@ -198,7 +219,7 @@ class SecuritySettingForm(BaseForm):
         min_value=1, max_value=99999, required=False,
         label=_("Connection max idle time"),
         help_text=_(
-            'If idle time more than it, disconnect connection(only ssh now) '
+            'If idle time more than it, disconnect connection '
             'Unit: minute'
         ),
     )

@@ -1,9 +1,7 @@
 # ~*~ coding: utf-8 ~*~
 
 from __future__ import unicode_literals
-from django.core.cache import cache
 from django.shortcuts import render
-from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import RedirectView
 from django.core.files.storage import default_storage
 from django.http import HttpResponseRedirect
@@ -15,6 +13,7 @@ from django.urls import reverse_lazy
 from formtools.wizard.views import SessionWizardView
 
 from common.utils import get_object_or_none
+from common.permissions import PermissionsMixin, IsValidUser
 from ..models import User
 from ..utils import (
     send_reset_password_mail, get_password_check_rules, check_password_rules
@@ -120,8 +119,9 @@ class UserResetPasswordView(TemplateView):
         return HttpResponseRedirect(reverse('users:reset-password-success'))
 
 
-class UserFirstLoginView(LoginRequiredMixin, SessionWizardView):
+class UserFirstLoginView(PermissionsMixin, SessionWizardView):
     template_name = 'users/first_login.html'
+    permission_classes = [IsValidUser]
     form_list = [
         forms.UserProfileForm,
         forms.UserPublicKeyForm,
@@ -142,7 +142,6 @@ class UserFirstLoginView(LoginRequiredMixin, SessionWizardView):
                 if field.value():
                     setattr(user, field.name, field.value())
         user.is_first_login = False
-        user.is_public_key_valid = True
         user.save()
         context = {
             'user_guide_url': settings.USER_GUIDE_URL
@@ -171,12 +170,12 @@ class UserFirstLoginView(LoginRequiredMixin, SessionWizardView):
         form.instance = self.request.user
 
         if isinstance(form, forms.UserMFAForm):
-            choices = form.fields["otp_level"].choices
-            if self.request.user.otp_force_enabled:
+            choices = form.fields["mfa_level"].choices
+            if self.request.user.mfa_force_enabled:
                 choices = [(k, v) for k, v in choices if k == 2]
             else:
                 choices = [(k, v) for k, v in choices if k in [0, 1]]
-            form.fields["otp_level"].choices = choices
-            form.fields["otp_level"].initial = self.request.user.otp_level
+            form.fields["mfa_level"].choices = choices
+            form.fields["mfa_level"].initial = self.request.user.mfa_level
 
         return form
